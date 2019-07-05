@@ -1,15 +1,19 @@
 import socket
 import os
 import enum
+import argparse
 from struct import pack, unpack, error as struerror
 from io import BytesIO
 
 
 @enum.unique
 class Options(enum.IntFlag):
-	YES = 1
-	NO = 8
-	MAYBE = 64
+	"""Communication options shared between Sender and Receiver
+
+	Option values have to be powers of 2 up to 128
+	"""
+	RETRY = 1		# retry file send if one of ACK's fail
+	MULTI_FILES = 2	# transfer of multiple files
 
 class Transport:
 	BUFFERSIZE = 4096
@@ -119,6 +123,28 @@ class Receiver(Transport):
 		return True
 
 
+
+
+def read_args():
+	parser = argparse.ArgumentParser(description='send or receive file/s')
+	parser.add_argument('mode', choices=['send', 'recv'], 
+		help='mode for sending or receiving')
+	parser.add_argument('-lh', '--lhost', nargs=2, 
+		help='address to bind to (host, port)')
+	parser.add_argument('-rh', '--rhost', nargs=2, 
+		help='address to connect to (REQUIRED with -s)')
+	parser.add_argument('-f', '--file', nargs=argparse.REMAINDER, 
+		help='file/s to be sent')
+
+	options = parser.add_argument_group(title='options [only with -s]')
+	options.add_argument('--retry', action='store_true', default=False, 
+		help='retry on failed ACK')
+
+	args = parser.parse_args()
+
+
+
+read_args()
 
 # s = Sender()
 # s.a = 111
