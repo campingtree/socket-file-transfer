@@ -1,7 +1,7 @@
 import socket
 import os
 import enum
-from struct import pack, unpack
+from struct import pack, unpack, error as struerror
 from io import BytesIO
 
 
@@ -99,8 +99,25 @@ class Sender(Transport):
 
 
 
-class Receiver:
-	pass
+class Receiver(Transport):
+	def __init__(self, sock=None, address=None):
+		super().__init__(sock, address)
+
+	def listen(self):
+		# check if socket already bound
+		try:
+			self.sock.getsockname()
+		except OSError:
+			self.sock.bind('', 0)
+		self.sock.listen(3)
+
+	def recv_options(self):
+		try:
+			self.options = self.byte_to_options(self.sock.recv(1))
+		except struerror:
+			return False
+		return True
+
 
 
 # s = Sender()
@@ -109,6 +126,6 @@ class Receiver:
 # print(z.a)
 
 
-# byte = Transform.options_to_byte(Options.YES, Options.NO, Options.MAYBE) 
+# byte = Transport.options_to_byte(Options.YES, Options.NO, Options.MAYBE) 
 # print(byte)
-# print(Transform.byte_to_options(byte))
+# print(Transport.byte_to_options(byte))
