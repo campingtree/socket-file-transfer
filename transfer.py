@@ -2,6 +2,7 @@ import socket
 import os
 import enum
 from struct import pack, unpack
+from io import BytesIO
 
 
 @enum.unique
@@ -40,8 +41,39 @@ class Transport:
 				options.append(Options(1<<i))
 		return options
 
-	def send_data(self, data, length):
-		pass
+	def send_data(self, stream, length):
+		# assert stream.mode == 'rb', "stream has to be of 'rb' mode"
+		totalsent = 0
+		while totalsent < length:
+			chunk = stream.read(BUFFERSIZE)
+
+			chunksent = 0
+			while chunksent < len(chunk):
+				sent = self.sock.send(chunk)
+				if not sent:
+					raise RuntimeError('connection broken')
+				chunksent += sent
+			totalsent += chunksent
+
+	def recv_data(self, stream, size):
+		# assert stream.mode == 'wb', "stream has to be of 'wb' mode"
+		bytesread = 0
+		while bytesread < size:
+			chunk = self.sock.recv(BUFFERSIZE)
+			if not chunk:
+				raise RuntimeError('connection broken')
+			stream.write(chunk)
+			bytesread += len(chunk)
+
+	def send_ack(self):
+		with BytesIO(b'\x01') as f:
+			self.send_data(f, 1)
+
+	def recv_ack(self):
+		ack = self.sock.recv(1)
+		# ack == b'\x01' ? True : False
+		return True if ack == b'\x01' else False
+
 
 
 class Sender(Transport):
@@ -55,9 +87,13 @@ class Sender(Transport):
 			# self.options = # [] some default options
 		# 
 
+	def connect(self, peer):
+		self.sock.connect(peer)
+
 	def send_options(self):
-		# pass
-		self.sock.sendall(self.options_to_byte(self.options))
+		# maybe a bit overkill, as we're only sending 1 byte
+		with BytesIO(self.options_to_byte(self.options)) as s:
+			self.send_data(s, 1)
 
 
 
