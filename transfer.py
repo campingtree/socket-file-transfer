@@ -37,7 +37,7 @@ class Transport:
 	@staticmethod
 	def options_to_byte(*options):
 		byte = 0
-		for op in options:
+		for op in options[0]:
 			byte |= op.value
 		return pack('>B', byte)
 
@@ -55,7 +55,7 @@ class Transport:
 		sha = hashlib.sha256()
 		totalsent = 0
 		while totalsent < length:
-			chunk = stream.read(BUFFERSIZE)
+			chunk = stream.read(self.BUFFERSIZE)
 			sha.update(chunk)
 
 			chunksent = 0
@@ -72,7 +72,7 @@ class Transport:
 		sha = hashlib.sha256()
 		bytesread = 0
 		while bytesread < size:
-			chunk = self.sock.recv(BUFFERSIZE)
+			chunk = self.sock.recv(self.BUFFERSIZE)
 			if not chunk:
 				raise RuntimeError('connection broken')
 			stream.write(chunk)
@@ -95,7 +95,7 @@ class Transport:
 
 	def recv_hash(self):
 		with BytesIO() as _hash:
-			recv_data(_hash, 32)
+			self.recv_data(_hash, 32)
 			_hash.seek(0)
 			return _hash.read()
 
@@ -130,14 +130,16 @@ class Sender(Transport):
 class Receiver(Transport):
 	def __init__(self, sock=None, address=None):
 		super().__init__(sock, address)
+		self.s_sock = self.sock
+		del self.sock
 
 	def listen(self):
 		# check if socket already bound
 		try:
-			self.sock.getsockname()
+			self.s_sock.getsockname()
 		except OSError:
-			self.sock.bind('', 0)
-		self.sock.listen(3)
+			self.s_sock.bind(('', 0))
+		self.s_sock.listen(3)
 
 	def recv_options(self):
 		try:
@@ -145,6 +147,12 @@ class Receiver(Transport):
 		except struerror:
 			return False
 		return True
+
+	def recv_file_size(self):
+		with BytesIO() as s:
+			self.recv_data(s, 8)
+			s.seek(0)
+			return unpack('>Q', s.read())[0]
 
 
 
@@ -172,52 +180,83 @@ def send(sender, files):
 	assert all(os.path.isfile(x) for x in files), \
 		"given paths for files must be existing files"
 	sender.send_options()
-	if not recv_ack():
+	if not sender.recv_ack():
 		raise RuntimeError('ACK failed')
+
 	for fn in files:
 		sender.send_file_size(fn)
-		if not recv_ack():
+		if not sender.recv_ack():
 			raise RuntimeError('ACK failed')
 		with open(fn, 'rb') as f:
 			local_hash = sender.send_data(f, os.path.getsize(fn))
-		if local_hash != self.recv_hash():
+		if local_hash != sender.recv_hash():
 			raise RuntimeError('Hash check failed')
-		self.send_ack()
+		sender.send_ack()
 	# self.sock.send(b'\xff')
-	self.sock.shutdown(socket.SHUT_WR) # end of communication
+	sender.sock.shutdown(socket.SHUT_WR) # end of communication
+
 
 def recv(receiver):
-	pass
+	print('[*] Listening on: %s:%s' % receiver.s_sock.getsockname())
+	receiver.sock, addr = receiver.s_sock.accept()
+	print('[*] Connection from: [%s:%s]' % receiver.sock.getpeername())
+	if not receiver.recv_options():
+		raise RuntimeError('failed to unpack options byte')
+	if Options['TIMEOUT'] in receiver.options: 
+		receiver.sock.settimeout(Transport.TIMEOUT)
+	receiver.send_ack()
+
+	count = 1 # temporary until filenames
+	while True:
+		length = receiver.recv_file_size()
+		receiver.send_ack()
+		with open('%s.data' % count, 'wb') as f:
+			local_hash = receiver.recv_data(f, length)
+		count += 1
+		receiver.send_hash(local_hash)
+		if not receiver.recv_ack():
+			raise RuntimeError('ACK failed')
+		break # test with single file
 
 
 def Main():
 	args = read_args()
-	if args.mode == 'send':
-		if not args.file:
-			exit("[!] atleast one file must be given in 'send' mode")
-		if not args.rhost:
-			exit("[!] remote address must be given in 'send' mode")
-		if args.lhost:
-			sender = Sender(
-				Options['MULTI_FILES'] if len(args.file) > 1 else Options['SINGLE_FILE'], 
-				args.timeout, address=(args.lhost[0], int(args.lhost[1])))
-		else:
-			sender = Sender(
-				Options['MULTI_FILES'] if len(args.file) > 1 else Options['SINGLE_FILE'], 
-				args.timeout)
-		try:
-			sender.connect((args.rhost[0], int(args.rhost[1])))
-		except socket.error:
-			exit('[!] failed to connect to remote host')
-		try:
+	try:
+		if args.mode == 'send':
+			if not args.file:
+				exit("[!] atleast one file must be given in 'send' mode")
+			if not args.rhost:
+				exit("[!] remote address must be given in 'send' mode")
+			if args.lhost:
+				sender = Sender(
+					Options['MULTI_FILES'] if len(args.file) > 1 else Options['SINGLE_FILE'], 
+					args.timeout, address=(args.lhost[0], int(args.lhost[1])))
+			else:
+				sender = Sender(
+					Options['MULTI_FILES'] if len(args.file) > 1 else Options['SINGLE_FILE'], 
+					args.timeout)
+			try:
+				sender.connect((args.rhost[0], int(args.rhost[1])))
+			except socket.error as e:
+				print(e)
+				exit('[!] failed to connect to remote host')
 			send(sender, args.file)
-		except socket.timeout:
-			print('[!] socket timed out')
-			raise
-		# print(sender.sock)
-		# print(sender.options)
+			# print(sender.sock)
+			# print(sender.options)
 
-	elif args.mode == 'recv':
+		elif args.mode == 'recv':
+			if args.lhost:
+				receiver = Receiver(address=(args.lhost[0], int(args.lhost[1])))
+			else:
+				receiver = Receiver()
+			receiver.listen()
+			recv(receiver)
+			
+	except socket.timeout:
+		print('[!] socket timed out')
+		raise
+	finally:
+		# close sockets and alike
 		pass
 
 if __name__ == '__main__':
