@@ -89,6 +89,15 @@ class Transport:
 		# ack == b'\x01' ? True : False
 		return True if ack == b'\x01' else False
 
+	def send_hash(self, _hash):
+		with BytesIO(_hash) as f:
+			self.send_data(f, 32)
+
+	def recv_hash(self):
+		with BytesIO() as _hash:
+			recv_data(_hash, 32)
+			_hash.seek(0)
+			return _hash.read()
 
 
 class Sender(Transport):
@@ -167,6 +176,11 @@ def send(sender, files):
 		raise RuntimeError('ACK failed')
 	for fn in files:
 		sender.send_file_size(fn)
+		if not recv_ack():
+			raise RuntimeError('ACK failed')
+		with open(fn, 'rb') as f:
+			local_hash = sender.send_data(f, os.path.getsize(fn))
+		if 
 
 def recv(receiver):
 	pass
