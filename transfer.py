@@ -156,7 +156,7 @@ def read_args():
 	parser.add_argument('-lh', '--lhost', nargs=2, 
 		help='address to bind to (host, port)')
 	parser.add_argument('-rh', '--rhost', nargs=2, 
-		help='address to connect to (REQUIRED with -s)')
+		help='address to connect to (REQUIRED in send mode)')
 	parser.add_argument('-f', '--file', nargs=argparse.REMAINDER, 
 		help='file/s to be sent')
 
@@ -180,7 +180,11 @@ def send(sender, files):
 			raise RuntimeError('ACK failed')
 		with open(fn, 'rb') as f:
 			local_hash = sender.send_data(f, os.path.getsize(fn))
-		if 
+		if local_hash != self.recv_hash():
+			raise RuntimeError('Hash check failed')
+		self.send_ack()
+	# self.sock.send(b'\xff')
+	self.sock.shutdown(socket.SHUT_WR) # end of communication
 
 def recv(receiver):
 	pass
