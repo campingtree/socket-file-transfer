@@ -1,5 +1,5 @@
 import socket
-import os
+import os # os.path
 import enum
 import argparse
 from struct import pack, unpack, error as struerror
@@ -102,6 +102,12 @@ class Sender(Transport):
 		# maybe a bit overkill, as we're only sending 1 byte
 		with BytesIO(self.options_to_byte(self.options)) as s:
 			self.send_data(s, 1)
+
+	def send_file_size(self, filename):
+		length = os.path.getsize(filename)
+		length_bytes = pack('>Q', length)
+		with BytesIO(length_bytes) as f:
+			self.send_data(f, 8)
 
 
 
