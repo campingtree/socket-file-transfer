@@ -4,6 +4,7 @@ import enum
 import argparse
 from struct import pack, unpack, error as struerror
 from io import BytesIO
+from sys import exit
 
 
 @enum.unique
@@ -12,11 +13,14 @@ class Options(enum.IntFlag):
 
 	Option values have to be powers of 2 up to 128
 	"""
-	RETRY = 1		# retry file send if one of ACK's fail
+	SINGLE_FILE	= 1	# transfer of single file
 	MULTI_FILES = 2	# transfer of multiple files
+	TIMEOUT = 4		# use timeout of 'Transport.TIMEOUT' seconds
+	NO_TIMEOUT = 16 # no timeout
 
 class Transport:
 	BUFFERSIZE = 4096
+	TIMEOUT = 60.0
 
 	def __init__(self, sock, address):
 		if not sock:
@@ -86,9 +90,9 @@ class Sender(Transport):
 		if options:
 			self.options = list(set(options))
 			assert all(isinstance(x, Options) for x in self.options)
+			if Options['TIMEOUT'] in self.options: self.sock.settimeout(Transport.TIMEOUT)
 		else:
-			pass
-			# self.options = # [] some default options
+			self.options = [Options['NO_TIMEOUT'], ] # default options
 		# 
 
 	def connect(self, peer):
@@ -98,8 +102,6 @@ class Sender(Transport):
 		# maybe a bit overkill, as we're only sending 1 byte
 		with BytesIO(self.options_to_byte(self.options)) as s:
 			self.send_data(s, 1)
-
-
 
 
 
@@ -137,14 +139,57 @@ def read_args():
 		help='file/s to be sent')
 
 	options = parser.add_argument_group(title='options [only with -s]')
-	options.add_argument('--retry', action='store_true', default=False, 
-		help='retry on failed ACK')
+	options.add_argument('--timeout', action='store_const', const=Options['TIMEOUT'], 
+		default=Options['NO_TIMEOUT'], help='use %ssec timeout' % Transport.TIMEOUT)
 
 	args = parser.parse_args()
+	return args
+
+
+def send(sender, files):
+	sender.send_options()
+	if not recv_ack():
+		raise RuntimeError('ACK failed')
+
+def recv(receiver):
+	pass
+
+
+def Main():
+	args = read_args()
+	if args.mode == 'send':
+		if not args.file:
+			exit("[!] atleast one file must be given in 'send' mode")
+		if not args.rhost:
+			exit("[!] remote address must be given in 'send' mode")
+		if args.lhost:
+			sender = Sender(
+				Options['MULTI_FILES'] if len(args.file) > 1 else Options['SINGLE_FILE'], 
+				args.timeout, address=(args.lhost[0], int(args.lhost[1])))
+		else:
+			sender = Sender(
+				Options['MULTI_FILES'] if len(args.file) > 1 else Options['SINGLE_FILE'], 
+				args.timeout)
+		try:
+			sender.connect((args.rhost[0], int(args.rhost[1])))
+		except socket.error:
+			exit('[!] failed to connect to remote host')
+		try:
+			send(sender, args.file)
+		except socket.timeout:
+			print('[!] socket timed out')
+			raise
+		# print(sender.sock)
+		# print(sender.options)
+
+	elif args.mode == 'recv':
+		pass
+
+if __name__ == '__main__':
+	Main()
 
 
 
-read_args()
 
 # s = Sender()
 # s.a = 111
