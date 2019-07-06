@@ -149,11 +149,13 @@ class Receiver(Transport):
 		return True
 
 	def recv_file_size(self):
-		with BytesIO() as s:
-			self.recv_data(s, 8)
-			s.seek(0)
-			return unpack('>Q', s.read())[0]
-
+		try:
+			with BytesIO() as s:
+				self.recv_data(s, 8)
+				s.seek(0)
+				return unpack('>Q', s.read())[0]
+		except RuntimeError:
+			return 0
 
 
 
@@ -179,6 +181,7 @@ def read_args():
 def send(sender, files):
 	assert all(os.path.isfile(x) for x in files), \
 		"given paths for files must be existing files"
+	print('[*] Connected to: [%s:%s]' % sender.sock.getpeername())
 	sender.send_options()
 	if not sender.recv_ack():
 		raise RuntimeError('ACK failed')
@@ -188,9 +191,11 @@ def send(sender, files):
 		if not sender.recv_ack():
 			raise RuntimeError('ACK failed')
 		with open(fn, 'rb') as f:
+			print('sending: %s ...' % fn)
 			local_hash = sender.send_data(f, os.path.getsize(fn))
 		if local_hash != sender.recv_hash():
 			raise RuntimeError('Hash check failed')
+		print('%s SENT' % fn)
 		sender.send_ack()
 	# self.sock.send(b'\xff')
 	sender.sock.shutdown(socket.SHUT_WR) # end of communication
@@ -209,14 +214,16 @@ def recv(receiver):
 	count = 1 # temporary until filenames
 	while True:
 		length = receiver.recv_file_size()
+		if not length:
+			break
 		receiver.send_ack()
 		with open('%s.data' % count, 'wb') as f:
 			local_hash = receiver.recv_data(f, length)
+		print('%d.data saved' % count)
 		count += 1
 		receiver.send_hash(local_hash)
 		if not receiver.recv_ack():
 			raise RuntimeError('ACK failed')
-		break # test with single file
 
 
 def Main():
