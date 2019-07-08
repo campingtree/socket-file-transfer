@@ -8,16 +8,22 @@ from io import BytesIO
 from sys import exit
 
 
+class FilenameTooLongError(Exception):
+	pass
+
+
 @enum.unique
 class Options(enum.IntFlag):
 	"""Communication options shared between Sender and Receiver
 
 	Option values have to be powers of 2 up to 128
 	"""
-	SINGLE_FILE	= 1	# transfer of single file
+	SINGLE_FILE = 1	# transfer of single file
 	MULTI_FILES = 2	# transfer of multiple files
-	TIMEOUT = 4		# use timeout of 'Transport.TIMEOUT' seconds
-	NO_TIMEOUT = 16 # no timeout
+	TIMEOUT = 4	# use timeout of 'Transport.TIMEOUT' seconds
+	NO_TIMEOUT = 16	# no timeout
+
+
 
 class Transport:
 	BUFFERSIZE = 16384
@@ -100,6 +106,7 @@ class Transport:
 			return _hash.read()
 
 
+
 class Sender(Transport):
 	def __init__(self, *options, sock=None, address=None):
 		super().__init__(sock, address)
@@ -124,6 +131,12 @@ class Sender(Transport):
 		length_bytes = pack('>Q', length)
 		with BytesIO(length_bytes) as f:
 			self.send_data(f, 8)
+
+	def send_filename(self, fn):
+		if len(fn) > 255:
+			raise FilenameTooLongError('%s contains more than 255 characters' % fn)
+		with BytesIO(bytes(fn.ljust(255, '\x00'), 'utf-8')) as f:
+			self.send_data(f, 255)
 
 
 
@@ -156,6 +169,12 @@ class Receiver(Transport):
 				return unpack('>Q', s.read())[0]
 		except RuntimeError:
 			return 0
+
+	def recv_filename(self):
+		with BytesIO() as fn:
+			self.recv_data(fn, 255)
+			fn.seek(0)
+			return str(fn.read(), 'utf-8').rstrip('\x00')
 
 
 
@@ -190,6 +209,9 @@ def send(sender, files):
 		sender.send_file_size(fn)
 		if not sender.recv_ack():
 			raise RuntimeError('ACK failed')
+		sender.send_filename(fn)
+		if not sender.recv_ack():
+			raise RuntimeError('ACK failed')
 		with open(fn, 'rb') as f:
 			print('sending: %s ...' % fn)
 			local_hash = sender.send_data(f, os.path.getsize(fn))
@@ -211,16 +233,16 @@ def recv(receiver):
 		receiver.sock.settimeout(Transport.TIMEOUT)
 	receiver.send_ack()
 
-	count = 1 # temporary until filenames
 	while True:
 		length = receiver.recv_file_size()
 		if not length:
 			break
 		receiver.send_ack()
-		with open('%s.data' % count, 'wb') as f:
+		filename = receiver.recv_filename()
+		receiver.send_ack()
+		with open(filename, 'wb') as f:
 			local_hash = receiver.recv_data(f, length)
-		print('%d.data saved' % count)
-		count += 1
+		print('%s saved' % filename)
 		receiver.send_hash(local_hash)
 		if not receiver.recv_ack():
 			raise RuntimeError('ACK failed')
@@ -262,6 +284,8 @@ def Main():
 	except socket.timeout:
 		print('[!] socket timed out')
 		raise
+	except FilenameTooLongError as e:
+		print('[!] %s' % e)
 	finally:
 		# close sockets and alike
 		pass
