@@ -12,11 +12,12 @@ class FilenameTooLongError(Exception):
 	pass
 
 
+
 @enum.unique
 class Options(enum.IntFlag):
-	"""Communication options shared between Sender and Receiver
+	"""Communication options shared between Sender and Receiver.
 
-	Option values have to be powers of 2 up to 128
+	Option values have to be powers of 2 up to 128.
 	"""
 	SINGLE_FILE = 1	# transfer of single file
 	MULTI_FILES = 2	# transfer of multiple files
@@ -26,6 +27,10 @@ class Options(enum.IntFlag):
 
 
 class Transport:
+	"""Base class for Sender And Receiver.
+
+	Contains core sending and receiving mechanisms.
+	"""
 	BUFFERSIZE = 16384
 	TIMEOUT = 60.0
 
@@ -42,6 +47,7 @@ class Transport:
 
 	@staticmethod
 	def options_to_byte(*options):
+		""" Convert Options members to bits and pack into single byte."""
 		byte = 0
 		for op in options[0]:
 			byte |= op.value
@@ -49,6 +55,7 @@ class Transport:
 
 	@staticmethod
 	def byte_to_options(byte):
+		""" Convert single byte to list of Options members."""
 		_byte = unpack('>B', byte)[0]
 		options = []
 		for i in range(8):
@@ -57,7 +64,11 @@ class Transport:
 		return options
 
 	def send_data(self, stream, length):
-		# assert stream.mode == 'rb', "stream has to be of 'rb' mode"
+		""" send_data(stream, length) -> hash of sent data as packed bytes 
+
+		Send length amount of data in chunks of Transport.BUFFERSIZE from binary stream. 
+		Raises RuntimeError if connection is broken.
+		"""
 		sha = hashlib.sha256()
 		totalsent = 0
 		while totalsent < length:
@@ -74,7 +85,11 @@ class Transport:
 		return sha.digest()
 
 	def recv_data(self, stream, size):
-		# assert stream.mode == 'wb', "stream has to be of 'wb' mode"
+		""" recv_data(stream, size) -> hash of received data as packed bytes 
+
+		Receive size amount of data in chunks of Transport.BUFFERSIZE from binary stream. 
+		Raises RuntimeError if connection is broken.
+		"""
 		sha = hashlib.sha256()
 		bytesread = 0
 		while bytesread < size:
@@ -96,10 +111,12 @@ class Transport:
 		return True if ack == b'\x01' else False
 
 	def send_hash(self, _hash):
+		""" Send SHA256 hash as Bytes stream of 32 bytes."""
 		with BytesIO(_hash) as f:
 			self.send_data(f, 32)
 
 	def recv_hash(self):
+		""" Receive SHA256 hash as packed bytes."""
 		with BytesIO() as _hash:
 			self.recv_data(_hash, 32)
 			_hash.seek(0)
@@ -108,6 +125,10 @@ class Transport:
 
 
 class Sender(Transport):
+	""" Class responsible for sending files.
+
+	Object of this class is used when in 'send' mode. 
+	"""
 	def __init__(self, *options, sock=None, address=None):
 		super().__init__(sock, address)
 		if options:
@@ -116,23 +137,25 @@ class Sender(Transport):
 			if Options['TIMEOUT'] in self.options: self.sock.settimeout(Transport.TIMEOUT)
 		else:
 			self.options = [Options['NO_TIMEOUT'], ] # default options
-		# 
 
 	def connect(self, peer):
 		self.sock.connect(peer)
 
 	def send_options(self):
+		""" Send a list of Options members packed into a single byte."""
 		# maybe a bit overkill, as we're only sending 1 byte
 		with BytesIO(self.options_to_byte(self.options)) as s:
 			self.send_data(s, 1)
 
 	def send_file_size(self, filename):
+		""" Send size of file with filename packed into big-endian 8 bytes."""
 		length = os.path.getsize(filename)
 		length_bytes = pack('>Q', length)
 		with BytesIO(length_bytes) as f:
 			self.send_data(f, 8)
 
 	def send_filename(self, fn):
+		""" Send filename padded to 255 bytes."""
 		if len(fn) > 255:
 			raise FilenameTooLongError('%s contains more than 255 characters' % fn)
 		with BytesIO(bytes(fn.ljust(255, '\x00'), 'utf-8')) as f:
@@ -141,20 +164,32 @@ class Sender(Transport):
 
 
 class Receiver(Transport):
+	""" Class responsible for receiving files.
+
+	Object of this class is used when in 'recv' mode. 
+	"""
 	def __init__(self, sock=None, address=None):
 		super().__init__(sock, address)
 		self.s_sock = self.sock
 		del self.sock
 
 	def listen(self):
-		# check if socket already bound
+		""" call listen() on the underlying server socket.
+
+		This also makes sure the socket is bound before calling listen().
+		"""
 		try:
-			self.s_sock.getsockname()
+			self.s_sock.getsockname() # check if socket already bound
 		except OSError:
 			self.s_sock.bind(('', 0))
 		self.s_sock.listen(3)
 
 	def recv_options(self):
+		""" recv_options() -> True/False
+
+		Receives a list of Options members as a packed byte, unpacks them to a 
+		list and assigns to self.options.
+		"""
 		try:
 			self.options = self.byte_to_options(self.sock.recv(1))
 		except struerror:
@@ -162,6 +197,10 @@ class Receiver(Transport):
 		return True
 
 	def recv_file_size(self):
+		""" Receive size of file packed into big-endian 8 bytes and return it as integer.
+
+		Returns 0 on unsuccessful unpack.
+		"""
 		try:
 			with BytesIO() as s:
 				self.recv_data(s, 8)
@@ -171,6 +210,7 @@ class Receiver(Transport):
 			return 0
 
 	def recv_filename(self):
+		""" Receive padded filename, remove padding and return it as string. """
 		with BytesIO() as fn:
 			self.recv_data(fn, 255)
 			fn.seek(0)
@@ -219,7 +259,6 @@ def send(sender, files):
 			raise RuntimeError('Hash check failed')
 		print('%s SENT' % fn)
 		sender.send_ack()
-	# self.sock.send(b'\xff')
 	sender.sock.shutdown(socket.SHUT_WR) # end of communication
 
 
@@ -270,8 +309,6 @@ def Main():
 				print(e)
 				exit('[!] failed to connect to remote host')
 			send(sender, args.file)
-			# print(sender.sock)
-			# print(sender.options)
 
 		elif args.mode == 'recv':
 			if args.lhost:
@@ -283,25 +320,13 @@ def Main():
 			
 	except socket.timeout:
 		print('[!] socket timed out')
-		raise
 	except FilenameTooLongError as e:
 		print('[!] %s' % e)
 	finally:
 		# close sockets and alike
 		pass
 
+
+
 if __name__ == '__main__':
 	Main()
-
-
-
-
-# s = Sender()
-# s.a = 111
-# z = Sender()
-# print(z.a)
-
-
-# byte = Transport.options_to_byte(Options.YES, Options.NO, Options.MAYBE) 
-# print(byte)
-# print(Transport.byte_to_options(byte))
