@@ -20,7 +20,7 @@ class Options(enum.IntFlag):
 	NO_TIMEOUT = 16 # no timeout
 
 class Transport:
-	BUFFERSIZE = 4096
+	BUFFERSIZE = 16384
 	TIMEOUT = 60.0
 
 	def __init__(self, sock, address):
