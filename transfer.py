@@ -289,6 +289,7 @@ def recv(receiver):
 
 def Main():
 	args = read_args()
+	transport = None
 	try:
 		if args.mode == 'send':
 			if not args.file:
@@ -296,27 +297,27 @@ def Main():
 			if not args.rhost:
 				exit("[!] remote address must be given in 'send' mode")
 			if args.lhost:
-				sender = Sender(
+				transport = Sender(
 					Options['MULTI_FILES'] if len(args.file) > 1 else Options['SINGLE_FILE'], 
 					args.timeout, address=(args.lhost[0], int(args.lhost[1])))
 			else:
-				sender = Sender(
+				transport = Sender(
 					Options['MULTI_FILES'] if len(args.file) > 1 else Options['SINGLE_FILE'], 
 					args.timeout)
 			try:
-				sender.connect((args.rhost[0], int(args.rhost[1])))
+				transport.connect((args.rhost[0], int(args.rhost[1])))
 			except socket.error as e:
 				print(e)
 				exit('[!] failed to connect to remote host')
-			send(sender, args.file)
+			send(transport, args.file)
 
 		elif args.mode == 'recv':
 			if args.lhost:
-				receiver = Receiver(address=(args.lhost[0], int(args.lhost[1])))
+				transport = Receiver(address=(args.lhost[0], int(args.lhost[1])))
 			else:
-				receiver = Receiver()
-			receiver.listen()
-			recv(receiver)
+				transport = Receiver()
+			transport.listen()
+			recv(transport)
 			
 	except socket.timeout:
 		print('[!] socket timed out')
@@ -324,7 +325,10 @@ def Main():
 		print('[!] %s' % e)
 	finally:
 		# close sockets and alike
-		pass
+		if transport:
+			transport.sock.close()
+			if hasattr(transport, 's_sock'):
+				transport.s_sock.close()
 
 
 
